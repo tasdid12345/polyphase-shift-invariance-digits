@@ -1,0 +1,31 @@
+{
+  "question": "Does translation-invariant polyphase max pooling keep a classifier's accuracy more stable under small input shifts than standard stride-2 max pooling on the digits dataset?",
+  "method": "Baseline: standard stride-2 max-pooled features with standardized logistic regression (C tuned by 5-fold CV on training data). Improved: polyphase max-pooled features (elementwise max of the four stride-2 sub-grids plus the sub-grids themselves, 80 features) with a standardized RBF SVM whose C and gamma are tuned by 5-fold CV on training data. Both trained on unshifted train images; test accuracy averaged over 25 circular shifts (up to 2 px).",
+  "dataset": {
+    "name": "Optical Recognition of Handwritten Digits (scikit-learn load_digits)",
+    "source_url": "https://archive.ics.uci.edu/dataset/80/optical+recognition+of+handwritten+digits",
+    "n_rows": 1797,
+    "n_train": 1257,
+    "n_test": 540,
+    "same_as_paper": false,
+    "baseline_is_papers_method": false
+  },
+  "metric_name": "mean test accuracy over 25 circular shifts (up to 2 px in each direction)",
+  "higher_is_better": true,
+  "baseline": "Standard 2x2 max pooling with stride 2 (8x8 -> 4x4) followed by standardized logistic regression.",
+  "improved": "Dense stride-1 2x2 max pooling with polyphase sub-grids (elementwise max plus separate sub-grid features, 80 values per image) followed by a standardized RBF SVM tuned by CV on training data.",
+  "metrics": {
+    "baseline_score": 0.2088888888888889,
+    "improved_score": 0.20562962962962963,
+    "improvement": -0.0032592592592592673,
+    "baseline_score_std": 0.18270787435832567,
+    "improved_score_std": 0.20895880101412817,
+    "baseline_clean_accuracy": 0.837037037037037,
+    "improved_clean_accuracy": 0.975925925925926,
+    "baseline_f1": 0.8372140175275458,
+    "improved_f1": 0.9758916998225192,
+    "baseline_unchanged_fraction": 0.21518518518518523,
+    "improved_unchanged_fraction": 0.20444444444444443
+  },
+  "notes": "Single deterministic run with seed 42 (the SVM and logistic regression are deterministic given the split), so the score_std values are the spread across the 25 shifts, not across seeds. The baseline is a stand-in for CNN pooling; the paper's exact polyphase selection rule was not re-implemented. The improved model changes both the pooled features and the classifier (RBF SVM), so any gain reflects the combination and not pooling alone; the elementwise max over the four phases also enlarges the effective pooling window to about 3x3. Hyperparameters were chosen only by 5-fold CV on the training set; the test set was used once for final scores. Only 8x8 images were used, so results may not transfer to deep CNNs."
+}
