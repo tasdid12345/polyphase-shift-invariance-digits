@@ -1,21 +1,23 @@
-# Shift Robustness of Polyphase Max Pooling on Handwritten Digits
+# Shift robustness: polyphase vs. stride-2 max pooling on load_digits
 
-**Motivation.** Standard stride-2 pooling discards spatial information, so a convolutional network's predictions can change when its input is shifted by a pixel or two, even though the digit is unchanged. The paper "Improving shift invariance in convolutional neural networks with translation invariant polyphase sampling" (2025) proposes a translation-invariant polyphase sampling scheme for pooling layers to reduce this sensitivity. This repository tests the pooling idea in a much smaller setting.
+Question: does translation-invariant polyphase max pooling keep a classifier's accuracy more stable under small input shifts than standard stride-2 max pooling?
 
-**Question.** Does translation-invariant polyphase max pooling keep a classifier's accuracy more stable under small input shifts than standard stride-2 max pooling?
+Setup:
+- Data: scikit-learn `load_digits` (bundled, no download), stratified 70/30 split with seed 42 (1257 train / 540 test).
+- Evaluation: mean test accuracy over 25 circular shifts (every (dy, dx) with |dy|, |dx| <= 2).
+- Baseline: 2x2 stride-2 max pooling (16 features) + standardized logistic regression, C tuned by 5-fold CV on the training set.
+- Improved: dense stride-1 polyphase max pooling (elementwise max of the four sub-grids, plus the sub-grids themselves; 80 features) + standardized RBF SVM, C and gamma tuned by 5-fold CV on the training set.
 
-**Dataset.** The bundled scikit-learn `load_digits` set (UCI Optical Recognition of Handwritten Digits), 8x8 images, with a stratified hold-out split and a fixed seed. This is not the paper's own dataset.
+The test set is used only for final scoring.
 
-**Baseline vs. improved.** Both models use the same pooled features, the same standardized logistic regression with C chosen by cross-validation on the training set, and the same evaluation on shifted test images. The baseline uses standard 2x2 max pooling with stride 2. The improved model uses a dense stride-1 2x2 max pool whose four stride-2 polyphase outputs are combined by an elementwise maximum. The baseline is a stand-in for CNN pooling, not a re-implementation of the paper's method.
-
-**How to run**
-
+Run:
 ```
 pip install -r requirements.txt
 python analysis.py
 ```
+Outputs `results.json` and `figures/shift_accuracy.png`.
 
-**Results.** Results are written to `results.json`; a chart is saved to `figures/shift_accuracy.png`.
+Caveat: the improved model changes both the features and the classifier, so the gain cannot be attributed to pooling alone.
 
 ## Reference
 

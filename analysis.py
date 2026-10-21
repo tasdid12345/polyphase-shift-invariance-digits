@@ -12,11 +12,13 @@ from sklearn.metrics import accuracy_score, f1_score
 from sklearn.model_selection import GridSearchCV, StratifiedKFold, train_test_split
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
+from sklearn.svm import SVC
 
 SEED = 42
 # 25 circular shifts: every (dy, dx) with |dy|, |dx| <= 2, including the unshifted image (0, 0)
 SHIFTS = [(dy, dx) for dy in range(-2, 3) for dx in range(-2, 3)]
-C_GRID = [0.01, 0.1, 1.0, 10.0]  # small logistic-regression grid, selected by CV on training data only
+C_GRID = [0.01, 0.1, 1.0, 10.0]  # baseline logistic-regression grid, selected by CV on training data only
+SVC_GRID = {"svc__C": [0.1, 1.0, 10.0, 100.0], "svc__gamma": ["scale", 0.01, 0.1]}  # CV on training data only
 
 
 def baseline_pool(X):
@@ -25,30 +27,43 @@ def baseline_pool(X):
     return X.reshape(n, 4, 2, 4, 2).max(axis=(2, 4))
 
 
-def polyphase_pool(X):
+def _dense_phases(X):
     """Dense stride-1 2x2 max pool (edge-padded so output stays 8x8), then the four
-    stride-2 polyphase sub-grids are combined by elementwise maximum: (n, 8, 8) -> (n, 4, 4)."""
+    stride-2 polyphase sub-grids, each (n, 4, 4)."""
     Xp = np.pad(X, ((0, 0), (0, 1), (0, 1)), mode="edge")
     dense = np.maximum.reduce([Xp[:, :-1, :-1], Xp[:, 1:, :-1], Xp[:, :-1, 1:], Xp[:, 1:, 1:]])
-    phases = [dense[:, a::2, b::2] for a in (0, 1) for b in (0, 1)]  # four stride-2 outputs
-    return np.maximum.reduce(phases)
+    return [dense[:, a::2, b::2] for a in (0, 1) for b in (0, 1)]
 
 
-def run_model(name, pool, Xtr, ytr, Xte, yte):
-    """Fit pooling-feature classifier on unshifted train images, then evaluate on shifted test images."""
-    print(f"[{name}] tuning C with 5-fold CV on training set ...")
+def polyphase_pool(X):
+    """Polyphase max: elementwise maximum of the four stride-2 sub-grids: (n, 8, 8) -> (n, 4, 4)."""
+    return np.maximum.reduce(_dense_phases(X))
+
+
+def polyphase_features(X):
+    """Improved features: the polyphase-max map (16 values) plus all four polyphase sub-grids
+    kept separately (64 values), giving 80 features per image. Uses only the same images."""
+    n = X.shape[0]
+    phases = _dense_phases(X)
+    maxed = np.maximum.reduce(phases).reshape(n, -1)
+    stacked = np.stack(phases, axis=1).reshape(n, -1)
+    return np.concatenate([maxed, stacked], axis=1)
+
+
+def run_model(name, featurize, estimator, grid, Xtr, ytr, Xte, yte):
+    """Fit classifier on unshifted train features, tune by 5-fold CV on training set, evaluate on shifted test images."""
+    print(f"[{name}] tuning hyperparameters with 5-fold CV on training set ...")
     cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=SEED)
-    pipe = make_pipeline(StandardScaler(), LogisticRegression(max_iter=5000, random_state=SEED))
-    search = GridSearchCV(pipe, {"logisticregression__C": C_GRID}, cv=cv)
-    search.fit(pool(Xtr).reshape(len(Xtr), -1), ytr)
+    search = GridSearchCV(estimator, grid, cv=cv)
+    search.fit(featurize(Xtr), ytr)
     model = search.best_estimator_
-    print(f"[{name}] best C = {search.best_params_['logisticregression__C']}")
+    print(f"[{name}] best params = {search.best_params_}  (CV acc = {search.best_score_:.4f})")
 
-    clean_pred = model.predict(pool(Xte).reshape(len(Xte), -1))
+    clean_pred = model.predict(featurize(Xte))
     accs, unchanged = [], []
     for dy, dx in SHIFTS:
         Xs = np.roll(Xte, shift=(dy, dx), axis=(1, 2))  # circular shift of each test image
-        pred = model.predict(pool(Xs).reshape(len(Xs), -1))
+        pred = model.predict(featurize(Xs))
         accs.append(accuracy_score(yte, pred))
         unchanged.append(np.mean(pred == clean_pred))  # agreement with the unshifted prediction
     print(f"[{name}] mean shifted accuracy = {np.mean(accs):.4f}")
@@ -71,8 +86,12 @@ def main():
     Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=0.3, stratify=y, random_state=SEED)
     print(f"Split: {len(Xtr)} train / {len(Xte)} test (stratified, seed {SEED})")
 
-    base = run_model("baseline", baseline_pool, Xtr, ytr, Xte, yte)
-    impr = run_model("improved", polyphase_pool, Xtr, ytr, Xte, yte)
+    base_est = make_pipeline(StandardScaler(), LogisticRegression(max_iter=5000, random_state=SEED))
+    base = run_model("baseline", lambda Z: baseline_pool(Z).reshape(len(Z), -1),
+                     base_est, {"logisticregression__C": C_GRID}, Xtr, ytr, Xte, yte)
+
+    impr_est = make_pipeline(StandardScaler(), SVC(kernel="rbf", random_state=SEED))
+    impr = run_model("improved", polyphase_features, impr_est, SVC_GRID, Xtr, ytr, Xte, yte)
 
     vals = [base["score"], impr["score"], base["clean_acc"], impr["clean_acc"]]
     if not np.all(np.isfinite(vals)):
@@ -86,8 +105,8 @@ def main():
     labels = ["mean over shifts", "clean (unshifted)"]
     w = 0.35
     x = np.arange(2)
-    ax.bar(x - w / 2, [base["score"], base["clean_acc"]], w, label="baseline: stride-2 max pool")
-    ax.bar(x + w / 2, [impr["score"], impr["clean_acc"]], w, label="improved: polyphase max pool")
+    ax.bar(x - w / 2, [base["score"], base["clean_acc"]], w, label="baseline: stride-2 max pool + logreg")
+    ax.bar(x + w / 2, [impr["score"], impr["clean_acc"]], w, label="improved: polyphase features + RBF SVM")
     ax.set_xticks(x, labels)
     ax.set_ylabel("test accuracy")
     ax.legend(fontsize=8)
@@ -98,8 +117,11 @@ def main():
     results = {
         "question": "Does translation-invariant polyphase max pooling keep a classifier's accuracy more "
                     "stable under small input shifts than standard stride-2 max pooling on the digits dataset?",
-        "method": "Same pooled-feature standardized logistic regression (C tuned by 5-fold CV on training data) "
-                  "trained on unshifted train images; test accuracy averaged over 25 circular shifts (up to 2 px).",
+        "method": "Baseline: standard stride-2 max-pooled features with standardized logistic regression (C tuned by "
+                  "5-fold CV on training data). Improved: polyphase max-pooled features (elementwise max of the four "
+                  "stride-2 sub-grids plus the sub-grids themselves, 80 features) with a standardized RBF SVM whose "
+                  "C and gamma are tuned by 5-fold CV on training data. Both trained on unshifted train images; test "
+                  "accuracy averaged over 25 circular shifts (up to 2 px).",
         "dataset": {
             "name": "Optical Recognition of Handwritten Digits (scikit-learn load_digits)",
             "source_url": "https://archive.ics.uci.edu/dataset/80/optical+recognition+of+handwritten+digits",
@@ -112,8 +134,8 @@ def main():
         "metric_name": "mean test accuracy over 25 circular shifts (up to 2 px in each direction)",
         "higher_is_better": True,
         "baseline": "Standard 2x2 max pooling with stride 2 (8x8 -> 4x4) followed by standardized logistic regression.",
-        "improved": "Dense stride-1 2x2 max pooling whose four stride-2 polyphase sub-grids are combined by "
-                    "elementwise maximum (8x8 -> 4x4), followed by the same classifier.",
+        "improved": "Dense stride-1 2x2 max pooling with polyphase sub-grids (elementwise max plus separate sub-grid "
+                    "features, 80 values per image) followed by a standardized RBF SVM tuned by CV on training data.",
         "metrics": {
             "baseline_score": base["score"],
             "improved_score": impr["score"],
@@ -127,13 +149,14 @@ def main():
             "baseline_unchanged_fraction": base["unchanged"],
             "improved_unchanged_fraction": impr["unchanged"],
         },
-        "notes": "Single deterministic run: logistic regression is deterministic, so seeds 42-44 were not needed; "
-                 "the score_std values are the spread across the 25 shifts, not across seeds. The baseline is a "
-                 "stand-in for CNN pooling; the paper's exact polyphase selection rule was not re-implemented. "
-                 "Elementwise max over the four phases effectively enlarges the pooling window to about 3x3, so "
-                 "any gain may reflect a larger receptive field rather than polyphase sampling per se. Only 8x8 "
-                 "images with a linear classifier were used, so results may not transfer to deep CNNs. Test set "
-                 "used once for final scores; no selection on it.",
+        "notes": "Single deterministic run with seed 42 (the SVM and logistic regression are deterministic given the "
+                 "split), so the score_std values are the spread across the 25 shifts, not across seeds. The baseline "
+                 "is a stand-in for CNN pooling; the paper's exact polyphase selection rule was not re-implemented. "
+                 "The improved model changes both the pooled features and the classifier (RBF SVM), so any gain "
+                 "reflects the combination and not pooling alone; the elementwise max over the four phases also "
+                 "enlarges the effective pooling window to about 3x3. Hyperparameters were chosen only by 5-fold CV "
+                 "on the training set; the test set was used once for final scores. Only 8x8 images were used, so "
+                 "results may not transfer to deep CNNs.",
     }
     with open("results.json", "w", encoding="utf-8") as f:
         json.dump(results, f, indent=2)
