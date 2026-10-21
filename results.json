@@ -1,0 +1,31 @@
+{
+  "question": "Does translation-invariant polyphase max pooling keep a classifier's accuracy more stable under small input shifts than standard stride-2 max pooling on the digits dataset?",
+  "method": "Same pooled-feature standardized logistic regression (C tuned by 5-fold CV on training data) trained on unshifted train images; test accuracy averaged over 25 circular shifts (up to 2 px).",
+  "dataset": {
+    "name": "Optical Recognition of Handwritten Digits (scikit-learn load_digits)",
+    "source_url": "https://archive.ics.uci.edu/dataset/80/optical+recognition+of+handwritten+digits",
+    "n_rows": 1797,
+    "n_train": 1257,
+    "n_test": 540,
+    "same_as_paper": false,
+    "baseline_is_papers_method": false
+  },
+  "metric_name": "mean test accuracy over 25 circular shifts (up to 2 px in each direction)",
+  "higher_is_better": true,
+  "baseline": "Standard 2x2 max pooling with stride 2 (8x8 -> 4x4) followed by standardized logistic regression.",
+  "improved": "Dense stride-1 2x2 max pooling whose four stride-2 polyphase sub-grids are combined by elementwise maximum (8x8 -> 4x4), followed by the same classifier.",
+  "metrics": {
+    "baseline_score": 0.2088888888888889,
+    "improved_score": 0.20614814814814814,
+    "improvement": -0.002740740740740766,
+    "baseline_score_std": 0.18270787435832567,
+    "improved_score_std": 0.16214163396555673,
+    "baseline_clean_accuracy": 0.837037037037037,
+    "improved_clean_accuracy": 0.7666666666666667,
+    "baseline_f1": 0.8372140175275458,
+    "improved_f1": 0.7652166962489648,
+    "baseline_unchanged_fraction": 0.21518518518518523,
+    "improved_unchanged_fraction": 0.21481481481481485
+  },
+  "notes": "Single deterministic run: logistic regression is deterministic, so seeds 42-44 were not needed; the score_std values are the spread across the 25 shifts, not across seeds. The baseline is a stand-in for CNN pooling; the paper's exact polyphase selection rule was not re-implemented. Elementwise max over the four phases effectively enlarges the pooling window to about 3x3, so any gain may reflect a larger receptive field rather than polyphase sampling per se. Only 8x8 images with a linear classifier were used, so results may not transfer to deep CNNs. Test set used once for final scores; no selection on it."
+}
